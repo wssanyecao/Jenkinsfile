@@ -1,0 +1,106 @@
+pipeline {
+  agent {
+    node {
+      label 'DEBIAN8'
+    }
+  }
+    triggers {
+        cron('H */4 * * 1-5')
+    }
+  environment {
+    ARTIFACTORY_URL = 'https://path.to.artifacts/some-registry'
+  }
+  options {
+    disableConcurrentBuilds()   // 同一时间最多只允许一个pipeline运行，如果前面的仍在运行， 后面的将会等待状态。
+    retry(1)                    // 失败了，重试一次。
+    skipStagesAfterUnstable()   // 如果某个stage为unstable状态，则忽略后面的任务，直接退出。
+    timeout(time: 10, unit: 'MINUTES')      // 10分钟的超时设置。
+    skipDefaultCheckout()                   //  忽略默认的checkout。
+    buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '1'))   // 保留最新的10个build log和1个artifact。
+  }
+  tools {
+    /**
+     * Predefined environment variables MAVEN3 and JDK-1.8
+     */
+    maven 'MAVEN3'
+    jdk 'JDK-1.8'
+  }
+  stages {
+    /**
+     * Initialization check for Java and Maven
+     */
+    stage('Initialization') {
+      steps {
+        sh '''
+          java -version
+          mvn -version
+        '''
+      }
+    }
+    /**
+     * Checkout source code from Github on any of the GIT nodes
+     */
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+    /**
+     * Compile the Maven project
+     */
+    stage('Build') {
+      steps {
+        sh 'mvn clean install'
+      }
+    }
+    /**
+     * Trigger this in PRs, don't run on master or release branches
+     */
+    stage('Package') {
+      when {
+        changeRequest()
+      }
+      steps {
+        sh 'mvn clean package -DskipTests'
+      }
+    }
+    /**
+     * Only run this on master and release branches
+     */
+    stage('Deploy') {
+      when {
+        branch 'master'
+      }
+      environment {
+        DEPLOYER = credentials('deployer')
+      }
+      steps {
+        sh 'mvn clean deploy'
+      }
+    }
+    /**
+     * Clean workspace
+     */
+    stage('Clean') {
+      steps {
+        cleanWs()
+      }
+    }
+  }
+    post { 
+        success {
+        sh """curl 'https://oapi.dingtalk.com/robot/send?access_token=${DINGTALK_CREDS_PWD}' \
+        -H 'Content-Type: application/json' \
+        -d '{"msgtype": "text","text": {"content": "😄👍构建成功👍😄\n 关键字：luffy\n 项目名称: ${JOB_BASE_NAME}\n Commit Id: ${GIT_COMMIT}\n 构建地址：${RUN_DISPLAY_URL}"}}'"""
+        }
+    
+        failure {
+        sh """curl 'https://oapi.dingtalk.com/robot/send?access_token=${DINGTALK_CREDS_PWD}' \
+        -H 'Content-Type: application/json' \
+        -d '{"msgtype": "text","text": {"content": "😖❌构建失败❌😖\n 关键字：luffy\n 项目名称: ${JOB_BASE_NAME}\n Commit Id: ${GIT_COMMIT}\n 构建地址：${RUN_DISPLAY_URL}"}}'"""
+        }
+    
+        always {
+        sh "printenv"
+    }
+}

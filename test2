@@ -1,0 +1,40 @@
+import java.text.SimpleDateFormat
+node {
+    try {
+
+        def projectName = controller-springboot
+        def containerPort = 8080
+        def dateFormat = new SimpleDateFormat("yyyyMMddHHmm")
+        def containerTag = dateFormat.format(new Date())
+        // 启用 prod 配置
+        def activeProfiles = prod
+        
+        stage('mvn install') {
+            sh 'pwd'
+            docker.image('maven:3.6.3').inside('-v /home/kinth/jenkins_blueocean/maven/.m2:/root/.m2 -v /home/kinth/jenkins_blueocean/maven/edit_setting.sh:/root/edit_setting.sh  --entrypoint=') {
+                sh 'mvn --version'
+                sh "sh /root/edit_setting.sh"
+                sh "mvn clean install package '-Dmaven.test.skip=true'"
+            }
+        }
+        stage('docker run') {
+            sh "pwd"
+            dir("${projectName}") {
+                sh 'pwd'
+                def imageUrl = "${projectName}:${containerTag}"
+                def dockerImage = docker.build(imageUrl)
+                sh "docker rm -f ${projectName} | true"
+                dockerImage.run("-it -d --name ${projectName} -p ${containerPort}:${containerPort} ")
+                sh """docker rmi \$(docker images | grep ${projectName} | sed -n  '4,\$p' | awk '{print \$3}') || true"""
+            }
+        }
+        currentBuild.result="SUCCESS"
+    } catch (e) {
+        currentBuild.result="FAILURE"
+        throw e
+    } finally {
+        //此处若想发布邮件，需要在系统管理-系统设置中配置邮件服务器
+        // mail to: 'xxxx@qq.com',subject: "Jenkins: ${currentBuild.fullDisplayName}，${currentBuild.result}",body:"${currentBuild.result}"
+        sh "echo send message"
+    }
+}
