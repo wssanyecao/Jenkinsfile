@@ -1,0 +1,60 @@
+// println env.JOB_NAME
+// println env.BUILD_NUMBER
+
+/* groovylint-disable-next-line CompileStatic */
+pipeline {
+    agent any
+    options {
+        disableConcurrentBuilds()   // 同一时间最多只允许一个pipeline运行，如果前面的仍在运行， 后面的将会等待状态。
+        retry(1)                    // 失败了，重试一次。
+        skipStagesAfterUnstable()   // 如果某个stage为unstable状态，则忽略后面的任务，直接退出。
+        timeout(time: 10, unit: 'MINUTES')      // 10分钟的超时设置。
+        skipDefaultCheckout()                   //  忽略默认的checkout。
+        buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '1'))   // 保留最新的10个build log和1个artifact。
+    }
+    stages {
+        stage ('check out') {
+            steps {
+                sh 'pwd'
+                checkout(
+                    [
+                        $class: 'GitSCM',
+                        branches: [[name: '*/master']],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [],
+                        submoduleCfg: [],
+                        userRemoteConfigs: [[
+                            credentialsId: '73f10f6a-78df-4b0d-ad1d-a62ceb503ce9',
+                            url: 'ssh://git@192.168.1.11:2233/kinth/test_controll.git'
+                            ]]
+                    ]
+                )
+            }
+        }
+        stage ('package') {
+            when {
+                branch 'master'
+            }
+            steps {
+                agent {
+                    docker.image('maven:3.6.3').inside('-v /home/kinth/jenkins_blueocean/maven/.m2:/root/.m2 -v /home/kinth/jenkins_blueocean/maven/edit_setting.sh:/root/edit_setting.sh  --entrypoint=') {
+                        sh 'mvn --version'
+                        sh 'sh /root/edit_setting.sh'
+                        sh 'mvn clean package -DskipTests'
+                    }
+                }
+            }
+        }
+    }
+    post {
+        success {
+            echo 'post success'
+        }
+        failure {
+            echo 'post faild'
+        }
+        always {
+            sh 'printenv'
+        }
+    }
+}
